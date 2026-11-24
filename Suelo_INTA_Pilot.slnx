@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Suelo_INTA_Pilot/Suelo_INTA_Pilot.vcxproj" Id="294552d7-ad44-44dc-b02c-fe4ec593cfcc" />
+</Solution>

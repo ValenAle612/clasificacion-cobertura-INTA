@@ -1,0 +1,235 @@
+#include <windows.h>
+#include <commdlg.h>
+#include <string>
+#include <sstream>
+#include <algorithm>
+
+#include <opencv2/opencv.hpp>
+#include <GLFW/glfw3.h>
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+
+using namespace std;
+using namespace cv;
+
+// Convierte una matriz cv::Mat en una textura OpenGL para mostrarla dentro de ImGui
+GLuint MatATexturaOpenGL(const Mat& matOriginal) {
+    if (matOriginal.empty()) return 0;
+
+    Mat temp;
+    // Normalizar si es 16 bits o float 
+    if (matOriginal.depth() != CV_8U) {
+        normalize(matOriginal, temp, 0, 255, NORM_MINMAX, CV_8U);
+    }
+    else {
+        temp = matOriginal.clone();
+    }
+
+    // Convertir a RGBA para OpenGL
+    if (temp.channels() == 1) {
+        cvtColor(temp, temp, COLOR_GRAY2RGBA);
+    }
+    else if (temp.channels() == 3) {
+        cvtColor(temp, temp, COLOR_BGR2RGBA);
+    }
+    else if (temp.channels() == 4) {
+        cvtColor(temp, temp, COLOR_BGRA2RGBA);
+    }
+
+    GLuint textureID;
+    glGenTextures(1, &textureID);
+    glBindTexture(GL_TEXTURE_2D, textureID);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, temp.cols, temp.rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, temp.data);
+    return textureID;
+}
+
+// Abre el cuadro de diálogo nativo de Windows para elegir archivo
+string AbrirDialogoArchivo() {
+    OPENFILENAMEA ofn;
+    char szFile[260] = { 0 };
+
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = NULL;
+    ofn.lpstrFile = szFile;
+    ofn.nMaxFile = sizeof(szFile);
+    ofn.lpstrFilter = "Imagenes (*.tif;*.tiff;*.png;*.jpg)\0*.tif;*.tiff;*.png;*.jpg\0Todos (*.*)\0*.*\0";
+    ofn.nFilterIndex = 1;
+    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+    if (GetOpenFileNameA(&ofn) == TRUE) {
+        return string(ofn.lpstrFile);
+    }
+    return "";
+}
+
+// Analiza la imagen con OpenCV y devuelve el reporte para el panel de salida
+string AnalizarImagen(const string& ruta, Mat& imagenOut) {
+    stringstream ss;
+    ss << "======================================\n";
+    ss << "ANALISIS DE IMAGEN \n";
+    ss << "======================================\n";
+    ss << "OpenCV Version: " << CV_VERSION << "\n";
+    ss << "Ruta: " << ruta << "\n\n";
+
+    imagenOut = imread(ruta, IMREAD_UNCHANGED);
+    if (imagenOut.empty()) {
+        ss << "ERROR: No se pudo abrir la imagen.\n";
+        return ss.str();
+    }
+
+    ss << "METADATOS:\n";
+    ss << " - Resolucion: " << imagenOut.cols << " x " << imagenOut.rows << " px\n";
+    ss << " - Canales: " << imagenOut.channels() << "\n";
+    ss << " - Profundidad: ";
+    switch (imagenOut.depth()) {
+    case CV_8U:  ss << "8 bits unsigned (CV_8U)\n"; break;
+    case CV_16U: ss << "16 bits unsigned (CV_16U)\n"; break;
+    case CV_32F: ss << "32 bits float (CV_32F)\n"; break;
+    default:     ss << "Codigo " << imagenOut.depth() << "\n"; break;
+    }
+
+    int x = imagenOut.cols / 2;
+    int y = imagenOut.rows / 2;
+    ss << "\n[2] PIXEL CENTRAL (" << x << ", " << y << "):\n";
+
+    if (imagenOut.channels() == 1) {
+        if (imagenOut.depth() == CV_8U)
+            ss << " - Valor: " << static_cast<int>(imagenOut.at<uchar>(y, x)) << "\n";
+        else if (imagenOut.depth() == CV_16U)
+            ss << " - Valor: " << imagenOut.at<unsigned short>(y, x) << "\n";
+        else if (imagenOut.depth() == CV_32F)
+            ss << " - Valor: " << imagenOut.at<float>(y, x) << "\n";
+
+        double minVal, maxVal;
+        minMaxLoc(imagenOut, &minVal, &maxVal);
+        ss << "\n[3] RANGO DE VALORES:\n";
+        ss << " - Minimo: " << minVal << "\n";
+        ss << " - Maximo: " << maxVal << "\n";
+    }
+    else if (imagenOut.channels() == 3 && imagenOut.depth() == CV_8U) {
+        Vec3b px = imagenOut.at<Vec3b>(y, x);
+        ss << " - Blue  = " << static_cast<int>(px[0]) << "\n";
+        ss << " - Green = " << static_cast<int>(px[1]) << "\n";
+        ss << " - Red   = " << static_cast<int>(px[2]) << "\n";
+    }
+
+    return ss.str();
+}
+
+int main() {
+    // Inicializar ventana GLFW
+    if (!glfwInit()) return -1;
+    GLFWwindow* window = glfwCreateWindow(1200, 720, "Analisis de Cobertura de Suelo - INTA", NULL, NULL);
+    if (!window) {
+        glfwTerminate();
+        return -1;
+    }
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(1); // V-Sync
+
+    // Inicializar contexto de Dear ImGui
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init("#version 130");
+
+    // Variables de estado de la aplicación
+    string logOutput = "Listo. Presiona 'Cargar Imagen' para comenzar...";
+    Mat imagenActual;
+    GLuint texturaImagen = 0;
+    float umbralEjemplo = 0.25f;
+
+    // Bucle principal de renderizado
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        // Configurar ventana principal de ImGui ocupando toda la pantalla
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
+        ImGui::Begin("Panel Principal", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+
+        // --- COLUMNA IZQUIERDA -> CONTROLES Y OUTPUT ---
+        ImGui::BeginChild("PanelControles", ImVec2(450, 0), true);
+
+        if (ImGui::Button("Cargar Imagen (.tif / .png / .jpg)", ImVec2(-1, 40))) {
+            string ruta = AbrirDialogoArchivo();
+            if (!ruta.empty()) {
+                logOutput = AnalizarImagen(ruta, imagenActual);
+                if (texturaImagen != 0) glDeleteTextures(1, &texturaImagen);
+                texturaImagen = MatATexturaOpenGL(imagenActual);
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::Text("Parametros de Prueba (Proximo: NDVI):");
+        ImGui::SliderFloat("Umbral Suelo/Veg", &umbralEjemplo, -1.0f, 1.0f, "%.2f");
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::Text("Salida / Log de Diagnostico:");
+        ImGui::BeginChild("CajaLog", ImVec2(0, 0), true);
+        ImGui::TextWrapped("%s", logOutput.c_str());
+        ImGui::EndChild();
+
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // --- COLUMNA DERECHA -> VISOR DE IMAGEN ---
+        ImGui::BeginChild("PanelVisor", ImVec2(0, 0), true);
+        if (texturaImagen != 0 && !imagenActual.empty()) {
+            ImVec2 areaDisponible = ImGui::GetContentRegionAvail();
+            float escalaX = areaDisponible.x / imagenActual.cols;
+            float escalaY = areaDisponible.y / imagenActual.rows;
+            float escala = min(escalaX, escalaY);
+
+            ImVec2 tamanoFinal(imagenActual.cols * escala, imagenActual.rows * escala);
+            ImGui::Image((ImTextureID)(intptr_t)texturaImagen, tamanoFinal);
+        }
+        else {
+            ImGui::Text("Ninguna imagen cargada en el visor.");
+        }
+        ImGui::EndChild();
+
+        ImGui::End();
+
+        // Renderizar cuadro en pantalla
+        ImGui::Render();
+        int display_w, display_h;
+        glfwGetFramebufferSize(window, &display_w, &display_h);
+        glViewport(0, 0, display_w, display_h);
+        glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        glfwSwapBuffers(window);
+    }
+
+    // Limpieza al cerrar
+    if (texturaImagen != 0) glDeleteTextures(1, &texturaImagen);
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    glfwDestroyWindow(window);
+    glfwTerminate();
+
+    return 0;
+}
