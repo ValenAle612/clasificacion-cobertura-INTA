@@ -361,3 +361,24 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Test-generated images
+prueba_opencv.png
+
+# Compiled binaries and dynamic libraries
+*.exe
+*.dll
+
+# Drone imagery, multispectral rasters, and flight telemetry/GNSS logs
+*.tif
+*.TIF
+*.tiff
+*.TIFF
+*.jpg
+*.JPG
+*.png
+*.PNG
+*.nav
+*.obs
+*.bin
+*.MRK
