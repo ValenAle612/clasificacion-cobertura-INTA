@@ -334,7 +334,6 @@ int main() {
     string logOutput = "Listo. Presiona 'Cargar Imagen' para comenzar...";
     Mat imagenActual;
     GLuint texturaImagen = 0;
-    float umbralEjemplo = 0.25f;
 
     // Bucle principal de renderizado
     while (!glfwWindowShouldClose(window)) {
@@ -365,9 +364,6 @@ int main() {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-
-        ImGui::Text("Parametros de Prueba (Proximo: NDVI):");
-        ImGui::SliderFloat("Umbral Suelo/Veg", &umbralEjemplo, -1.0f, 1.0f, "%.2f");
 
         ImGui::Spacing();
         ImGui::Separator();
