@@ -97,7 +97,7 @@ string AnalizarImagen(const string& ruta, Mat& imagenOut) {
 
     int x = imagenOut.cols / 2;
     int y = imagenOut.rows / 2;
-    ss << "\n[2] PIXEL CENTRAL (" << x << ", " << y << "):\n";
+    ss << "\nPIXEL CENTRAL (" << x << ", " << y << "):\n";
 
     if (imagenOut.channels() == 1) {
         if (imagenOut.depth() == CV_8U)
@@ -109,7 +109,7 @@ string AnalizarImagen(const string& ruta, Mat& imagenOut) {
 
         double minVal, maxVal;
         minMaxLoc(imagenOut, &minVal, &maxVal);
-        ss << "\n[3] RANGO DE VALORES:\n";
+        ss << "\nRANGO DE VALORES:\n";
         ss << " - Minimo: " << minVal << "\n";
         ss << " - Maximo: " << maxVal << "\n";
     }
@@ -121,6 +121,195 @@ string AnalizarImagen(const string& ruta, Mat& imagenOut) {
     }
 
     return ss.str();
+}
+
+// Inspector interactivo de pixeles
+void InspeccionarPixel(const Mat& imagen)
+{
+    // Verificar que existe una imagen cargada
+    if (imagen.empty())
+        return;
+
+    // Verificar que el mouse esta sobre la imagen
+    if (!ImGui::IsItemHovered())
+        return;
+
+    // Obtener los limites de la imagen en pantalla
+    ImVec2 inicio = ImGui::GetItemRectMin();
+    ImVec2 fin = ImGui::GetItemRectMax();
+
+    // Obtener la posicion del mouse
+    ImVec2 mouse = ImGui::GetMousePos();
+
+    // Dimensiones de la imagen mostrada
+    float anchoVisor = fin.x - inicio.x;
+    float altoVisor = fin.y - inicio.y;
+
+    if (anchoVisor <= 0 || altoVisor <= 0)
+        return;
+
+    // Transformar coordenadas de pantalla
+    // a coordenadas de la imagen original
+    int x = static_cast<int>(
+        (mouse.x - inicio.x) / anchoVisor * imagen.cols
+        );
+
+    int y = static_cast<int>(
+        (mouse.y - inicio.y) / altoVisor * imagen.rows
+        );
+
+    // Evitar accesos fuera de los limites de la matriz
+    if (x < 0 || x >= imagen.cols ||
+        y < 0 || y >= imagen.rows)
+        return;
+
+    // Crear panel flotante de informacion
+    if (ImGui::BeginTooltip())
+    {
+        ImGui::Text("INSPECTOR DE PIXELES");
+        ImGui::Separator();
+
+        ImGui::Text("X: %d", x);
+        ImGui::Text("Y: %d", y);
+
+        ImGui::Separator();
+
+        // CASO 1: IMAGEN RGB DE 8 BITS
+
+        if (imagen.type() == CV_8UC3)
+        {
+            Vec3b pixel = imagen.at<Vec3b>(y, x);
+
+            int B = pixel[0];
+            int G = pixel[1];
+            int R = pixel[2];
+
+            ImGui::Text("RGB");
+            ImGui::Text("Red:   %d", R);
+            ImGui::Text("Green: %d", G);
+            ImGui::Text("Blue:  %d", B);
+
+            // Mostrar visualmente el color del pixel
+            ImGui::ColorButton(
+                "##ColorPixel",
+                ImVec4(
+                    R / 255.0f,
+                    G / 255.0f,
+                    B / 255.0f,
+                    1.0f
+                ),
+                ImGuiColorEditFlags_NoTooltip,
+                ImVec2(80, 30)
+            );
+
+            // Crear una matriz de un unico pixel
+            // en punto flotante, normalizada entre 0 y 1
+            Mat pixelBGR(1, 1, CV_32FC3);
+
+            pixelBGR.at<Vec3f>(0, 0) = Vec3f(
+                B / 255.0f,
+                G / 255.0f,
+                R / 255.0f
+            );
+
+            // CONVERSION A HSV
+
+            Mat pixelHSV;
+
+            cvtColor(pixelBGR, pixelHSV, COLOR_BGR2HSV);
+
+            Vec3f hsv = pixelHSV.at<Vec3f>(0, 0);
+
+            float H = hsv[0];
+            float S = hsv[1];
+            float V = hsv[2];
+
+            ImGui::Separator();
+            ImGui::Text("HSV");
+            ImGui::Text("H: %.2f grados", H);
+            ImGui::Text("S: %.2f %%", S * 100.0f);
+            ImGui::Text("V: %.2f %%", V * 100.0f);
+
+            // CONVERSION A CIELAB
+
+            Mat pixelLab;
+
+            cvtColor(pixelBGR, pixelLab, COLOR_BGR2Lab);
+
+            Vec3f lab = pixelLab.at<Vec3f>(0, 0);
+
+            ImGui::Separator();
+            ImGui::Text("CIELAB");
+            ImGui::Text("L*: %.2f", lab[0]);
+            ImGui::Text("a*: %.2f", lab[1]);
+            ImGui::Text("b*: %.2f", lab[2]);
+
+            // INDICE EXCESS GREEN
+
+            int ExG = 2 * G - R - B;
+
+            float suma = static_cast<float>(R + G + B);
+
+            ImGui::Separator();
+            ImGui::Text("INDICES RGB");
+            ImGui::Text("ExG: %d", ExG);
+
+            if (suma > 0.0f)
+            {
+                float ExGNormalizado = ExG / suma;
+
+                ImGui::Text(
+                    "ExG normalizado: %.4f",
+                    ExGNormalizado
+                );
+            }
+            else
+            {
+                ImGui::Text("ExG normalizado: indefinido");
+            }
+        }
+
+        // CASO 2: IMAGEN MONOCANAL
+
+        else if (imagen.channels() == 1)
+        {
+            ImGui::Text("Banda monocanal");
+
+            if (imagen.depth() == CV_8U)
+            {
+                ImGui::Text(
+                    "Valor: %d",
+                    static_cast<int>(imagen.at<uchar>(y, x))
+                );
+            }
+            else if (imagen.depth() == CV_16U)
+            {
+                ImGui::Text(
+                    "Valor: %u",
+                    static_cast<unsigned int>(
+                        imagen.at<unsigned short>(y, x)
+                        )
+                );
+            }
+            else if (imagen.depth() == CV_32F)
+            {
+                ImGui::Text(
+                    "Valor: %.6f",
+                    imagen.at<float>(y, x)
+                );
+            }
+            else
+            {
+                ImGui::Text("Profundidad no implementada");
+            }
+        }
+        else
+        {
+            ImGui::Text("Formato no implementado");
+        }
+
+        ImGui::EndTooltip();
+    }
 }
 
 int main() {
@@ -203,6 +392,8 @@ int main() {
 
             ImVec2 tamanoFinal(imagenActual.cols * escala, imagenActual.rows * escala);
             ImGui::Image((ImTextureID)(intptr_t)texturaImagen, tamanoFinal);
+
+            InspeccionarPixel(imagenActual);
         }
         else {
             ImGui::Text("Ninguna imagen cargada en el visor.");
